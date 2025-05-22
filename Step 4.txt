@@ -1,0 +1,238 @@
+USE DATABASE sales_db;
+
+CREATE OR REPLACE SCHEMA sales_schema;
+
+
+USE SCHEMA sales_schema;
+
+-- Customer Dimension
+CREATE OR REPLACE TABLE Customer (
+    CustomerID VARCHAR PRIMARY KEY,
+    CustomerName VARCHAR,
+    Segment VARCHAR
+);
+
+
+-- Product Dimension
+CREATE OR REPLACE TABLE Product (
+    ProductID VARCHAR PRIMARY KEY,
+    ProductName VARCHAR,
+    Category VARCHAR,
+    Sub_Category VARCHAR
+);
+
+
+-- Location Dimension
+CREATE OR REPLACE TABLE Location (
+    StateID VARCHAR PRIMARY KEY,
+    State VARCHAR,
+    City VARCHAR,
+    Country VARCHAR,
+    PostalCode INT,
+    Region VARCHAR,
+    latitude FLOAT,
+    longitude FLOAT
+);
+
+
+-- Time Dimension
+CREATE OR REPLACE TABLE Time (
+    Date DATE PRIMARY KEY,
+    Day INT,
+    Month INT,
+    Year INT,
+    Quarter INT
+);
+
+--Fact table
+CREATE OR REPLACE TABLE Orders (
+    
+    OrderDate DATE,
+    ShipDate DATE,
+    CustomerID VARCHAR REFERENCES Customer(CustomerID),
+    ProductID VARCHAR REFERENCES Product(ProductID),
+    StateID VARCHAR REFERENCES Location(StateID),
+    Sales FLOAT,
+    Profit FLOAT,
+    Quantity INT,
+    Discount FLOAT,
+    OrderID VARCHAR PRIMARY KEY,
+    ShipMode VARCHAR,
+    ShipStatus VARCHAR,
+    DaystoShipActual INT,
+    DaystoShipScheduled INT,
+    ShippingDelay INT,
+    SalesForecast FLOAT,
+    OrderProfitable FLOAT,
+    SalesperCustomer FLOAT,
+    ProfitRatio FLOAT,
+    SalesaboveTarget FLOAT,
+    OrderMonth INT,
+    OrderYear INT
+);
+
+CREATE OR REPLACE STAGE my_csv_stage;
+
+CREATE TEMPORARY TABLE cleaned_sales_data (
+    OrderDate DATE,
+    Category VARCHAR,
+    City VARCHAR,
+    Country VARCHAR,
+    CustomerName VARCHAR,
+    Discount FLOAT,
+    OrderID VARCHAR,
+    PostalCode NUMBER,
+    ProductName VARCHAR,
+    Profit NUMBER,
+    Quantity NUMBER,
+    Region VARCHAR,
+    Sales NUMBER,
+    Segment VARCHAR,
+    ShipDate DATE,
+    ShipMode VARCHAR,
+    State VARCHAR,
+    Sub_Category VARCHAR,
+    DaystoShipActual NUMBER,
+    SalesForecast NUMBER,
+    ShipStatus VARCHAR,
+    DaystoShipScheduled NUMBER,
+    OrderProfitable FLOAT,
+    SalesperCustomer FLOAT,
+    ProfitRatio FLOAT,
+    SalesaboveTarget FLOAT,
+    latitude FLOAT,
+    longitude FLOAT,
+    ShippingDelay NUMBER,
+    OrderMonth NUMBER,
+    OrderYear NUMBER
+);
+
+COPY INTO cleaned_sales_data FROM @MY_CSV_STAGE/cleaned_sales_data.csv 
+FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY='"' SKIP_HEADER=1);
+
+SELECT * FROM cleaned_sales_data LIMIT 10;
+
+
+INSERT INTO Customer (CustomerID, CustomerName, Segment)
+SELECT DISTINCT
+    -- Assuming CustomerID can be generated or use CustomerName as ID if no ID in source
+    -- If you have a CustomerID in your source data, use that instead
+    CustomerName AS CustomerID,  
+    CustomerName,
+    Segment
+FROM cleaned_sales_data
+WHERE CustomerName IS NOT NULL;
+
+
+
+INSERT INTO Product (ProductID, ProductName, Category, Sub_Category)
+SELECT DISTINCT
+    ProductName AS ProductID,  -- Assuming ProductName as ProductID if no separate ID
+    ProductName,
+    Category,
+    Sub_Category
+FROM cleaned_sales_data
+WHERE ProductName IS NOT NULL;
+
+
+INSERT INTO Location (StateID, State, City, Country, PostalCode, Region, latitude, longitude)
+SELECT DISTINCT
+    State AS StateID,  -- Assuming State as StateID; adjust if you have separate IDs
+    State,
+    City,
+    Country,
+    PostalCode,
+    Region,
+    latitude,
+    longitude
+FROM cleaned_sales_data
+WHERE State IS NOT NULL;
+
+
+INSERT INTO Time (Date, Day, Month, Year, Quarter)
+SELECT DISTINCT
+    OrderDate AS Date,
+    DAY(OrderDate) AS Day,
+    MONTH(OrderDate) AS Month,
+    YEAR(OrderDate) AS Year,
+    CEIL(MONTH(OrderDate) / 3.0) AS Quarter
+FROM cleaned_sales_data
+WHERE OrderDate IS NOT NULL;
+
+
+
+INSERT INTO Orders (
+    OrderDate,
+    ShipDate,
+    CustomerID,
+    ProductID,
+    StateID,
+    Sales,
+    Profit,
+    Quantity,
+    Discount,
+    OrderID,
+    ShipMode,
+    ShipStatus,
+    DaystoShipActual,
+    DaystoShipScheduled,
+    ShippingDelay,
+    SalesForecast,
+    OrderProfitable,
+    SalesperCustomer,
+    ProfitRatio,
+    SalesaboveTarget,
+    OrderMonth,
+    OrderYear
+)
+SELECT
+    OrderDate,
+    ShipDate,
+    CustomerName AS CustomerID,  -- Matches CustomerID in Customer table
+    ProductName AS ProductID,    -- Matches ProductID in Product table
+    State AS StateID,            -- Matches StateID in Location table
+    Sales,
+    Profit,
+    Quantity,
+    Discount,
+    OrderID,
+    ShipMode,
+    ShipStatus,
+    DaystoShipActual,
+    DaystoShipScheduled,
+    ShippingDelay,
+    SalesForecast,
+    OrderProfitable,
+    SalesperCustomer,
+    ProfitRatio,
+    SalesaboveTarget,
+    OrderMonth,
+    OrderYear
+FROM cleaned_sales_data;
+
+
+SELECT * FROM Customer LIMIT 10;
+
+
+-- Create a training dataset for shipment status prediction
+CREATE OR REPLACE TABLE shipment_status_training AS
+SELECT 
+    ShipStatus,
+    DaystoShipActual,
+    DaystoShipScheduled,
+    ShippingDelay,
+    ShipMode,
+    Region,
+    Quantity,
+    Discount,
+    -- Add other relevant features
+    CASE 
+        WHEN ShippingDelay > 0 THEN 'Delayed'
+        WHEN ShippingDelay <= 0 THEN 'OnTime'
+        ELSE 'Unknown'
+    END AS StatusCategory
+FROM Orders o
+JOIN Location l ON o.StateID = l.StateID;
+
+SELECT * FROM shipment_status_training LIMIT 10;
+
